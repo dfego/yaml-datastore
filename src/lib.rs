@@ -1,19 +1,33 @@
+//! API for using a set of [YAML][00] files as a cohesive datastore.
+//!
+//! What this crate supports is having a set of YAML files be accessible as a single, uniform datastore.
+//! So for example, if you had a set of YAML files all containing structured data, you could use this crate
+//! to query specific values from it. In effect, it's an ergonomic wrapper for managing a set of files
+//! doing the file I/O, and pulling specific elements out of those files.
+//!
+//! [00]: https://yaml.org/
+
 use serde::de::DeserializeOwned;
 use serde_yml::{Mapping, value::from_value};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+/// Error type for this crate.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// An I/O error occurred, most likely a requested file was not found or could not be read.
     #[error("I/O error")]
     IOError(#[from] std::io::Error),
 
+    /// YAML data could not be parsed. Given YAML is very permissive, this is likely a formatting error.
     #[error("data parse error")]
     DataParseError(#[from] serde_yml::Error),
 
+    /// A key requested via [`Datastore::get_with_key`] or [`Datastore::get_with_key_vec`] was not found.
     #[error("key not found in data")]
     KeyNotFound,
 
+    /// An empty key vector was passed to [`Datastore::get_with_key_vec`].
     #[error("empty key vector")]
     EmptyKeyVector,
 }
@@ -89,15 +103,34 @@ mod hash_map_recurse_tests {
     }
 }
 
-pub struct YAMLDatastore {
+/// Handle for a YAML datastore.
+///
+/// Open with [init](Datastore::open).
+pub struct Datastore {
     root: PathBuf,
 }
 
-impl YAMLDatastore {
-    pub fn init<P: Into<PathBuf>>(path: P) -> YAMLDatastore {
-        YAMLDatastore { root: path.into() }
+impl Datastore {
+    /// Open a handle to a datastore at the given path.
+    ///
+    /// At present, this doesn't actually perform any operations.
+    pub fn open<P: Into<PathBuf>>(path: P) -> Datastore {
+        Datastore { root: path.into() }
     }
 
+    /// Get all the contents of a given YAML file in the datastore.
+    ///
+    /// This function makes no assumptions about the underlying YAML data other than it being valid.
+    ///
+    /// On success, returns an object of the specified return type.
+    ///
+    /// # Errors
+    ///
+    /// Will return [`Error::IOError`] if a file at `path` cannot be read.
+    ///
+    /// Will return [`Error::DataParseError`] if:
+    /// * A file at `path` is not able to be parsed as valid YAML
+    /// * The return type specified does not match the type found in the input file.
     pub fn get<P, T>(&self, path: P) -> Result<T, Error>
     where
         P: AsRef<Path>,
@@ -109,6 +142,23 @@ impl YAMLDatastore {
         Ok(result)
     }
 
+    /// Get a value from the given YAML file in the datastore based on a key.
+    ///
+    /// This function assumes the input YAML is a mapping.
+    ///
+    /// On success, returns an object of the specified return type.
+    ///
+    /// # Errors
+    ///
+    /// Will return [`Error::IOError`] if a file at `path` cannot be read.
+    ///
+    /// Will return [`Error::DataParseError`] if:
+    /// * A file at `path` is not able to be parsed as valid YAML
+    /// * The return type specified does not match the type found in the input file.
+    ///
+    /// Will return [`Error::KeyNotFound`] if the given key was not found in a top-level map of the YAML file.
+    /// * A file at `path` is not able to be parsed as valid YAML
+    /// * The return type specified does not match the type found in the input file.
     pub fn get_with_key<P, T>(&self, path: P, key: &str) -> Result<T, Error>
     where
         P: AsRef<Path>,
@@ -125,6 +175,37 @@ impl YAMLDatastore {
         Ok(from_value(value)?)
     }
 
+    /// Get a value from the given YAML file in the datastore based on a set of keys.
+    ///
+    /// This function assumes the input YAML is a mapping.
+    /// It traverses each element of `key_vec` and treats it as a level of nesting.
+    /// For example, for the given input:
+    ///
+    /// ```yaml
+    /// outer:
+    ///   middle:
+    ///     inner: 42
+    /// ```
+    ///
+    /// In order to get the value of `inner` (42), A `key_vec` would be passed as:
+    ///
+    /// ```no_run
+    /// vec!["outer", "middle", "inner"]
+    /// ```
+    ///
+    /// On success, returns an object of the specified return type.
+    ///
+    /// # Errors
+    ///
+    /// Will return [`Error::IOError`] if a file at `path` cannot be read.
+    ///
+    /// Will return [`Error::DataParseError`] if:
+    /// * A file at `path` is not able to be parsed as valid YAML
+    /// * The return type specified does not match the type found in the input file.
+    ///
+    /// Will return [`Error::KeyNotFound`] if the given key was not found in a top-level map of the YAML file.
+    /// * A file at `path` is not able to be parsed as valid YAML
+    /// * The return type specified does not match the type found in the input file.
     pub fn get_with_key_vec<P, T>(&self, path: P, key_vec: &[&str]) -> Result<T, Error>
     where
         P: AsRef<Path>,
@@ -171,7 +252,7 @@ mod tests {
 
     #[test]
     fn initialize_yaml_datastore() {
-        let _datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let _datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
     }
 
     #[test]
@@ -185,7 +266,7 @@ mod tests {
             nested: Some(TestNested { value: true }),
         };
 
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let parsed: TestFormat = datastore.get("complete.yaml").unwrap();
         assert_eq!(parsed, reference);
     }
@@ -201,21 +282,21 @@ mod tests {
             nested: None,
         };
 
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let parsed: TestFormat = datastore.get("no_tags.yaml").unwrap();
         assert_eq!(parsed, reference);
     }
 
     #[test]
     fn test_with_single_bool_key() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result: bool = datastore.get_with_key("complete.yaml", "complete").unwrap();
         assert_eq!(result, true);
     }
 
     #[test]
     fn nested_bool() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result: bool = datastore
             .get_with_key_vec("complete.yaml", &vec!["nested", "value"])
             .unwrap();
@@ -224,7 +305,7 @@ mod tests {
 
     #[test]
     fn single_bool_key_not_found() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result = datastore
             .get_with_key::<_, bool>("empty.yaml", "complete")
             .unwrap_err();
@@ -233,21 +314,21 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let parsed = datastore.get::<_, TestFormat>("nonexistent").unwrap_err();
         assert!(matches!(parsed, Error::IOError(_)));
     }
 
     #[test]
     fn test_parse_error() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let parsed = datastore.get::<_, TestFormat>("empty.yaml").unwrap_err();
         assert!(matches!(parsed, Error::DataParseError(_)));
     }
 
     #[test]
     fn mismatched_type() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result = datastore
             .get_with_key::<_, u64>("complete.yaml", "complete")
             .unwrap_err();
@@ -256,7 +337,7 @@ mod tests {
 
     #[test]
     fn duplicate_key() {
-        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result = datastore
             .get_with_key::<_, bool>("duplicate.yaml", "key")
             .unwrap_err();
