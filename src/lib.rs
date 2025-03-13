@@ -90,12 +90,12 @@ mod hash_map_recurse_tests {
 }
 
 pub struct YAMLDatastore {
-    _root: PathBuf,
+    root: PathBuf,
 }
 
 impl YAMLDatastore {
     pub fn init<P: Into<PathBuf>>(path: P) -> YAMLDatastore {
-        YAMLDatastore { _root: path.into() }
+        YAMLDatastore { root: path.into() }
     }
 
     pub fn get<P, T>(&self, path: P) -> Result<T, Error>
@@ -103,7 +103,7 @@ impl YAMLDatastore {
         P: AsRef<Path>,
         T: DeserializeOwned,
     {
-        let full_path = self._root.join(&path);
+        let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
         let result = serde_yml::from_str(&file_string)?;
         Ok(result)
@@ -118,7 +118,7 @@ impl YAMLDatastore {
             return self.get(path);
         }
 
-        let full_path = self._root.join(&path);
+        let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
         let mapping: Mapping = serde_yml::from_str(&file_string)?;
         let value = mapping.get(key).ok_or(Error::KeyNotFound)?.to_owned();
@@ -134,7 +134,7 @@ impl YAMLDatastore {
             return self.get(path);
         }
 
-        let full_path = self._root.join(&path);
+        let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
         let mapping: serde_yml::Mapping = serde_yml::from_str(&file_string)?;
         map_recurse(&mapping, key_vec)
