@@ -40,7 +40,7 @@ impl YAMLDatastore {
         Ok(result)
     }
 
-    pub fn get_with_key<P, T>(&self, path: P, key: &[&str]) -> Result<T, Error>
+    pub fn get_with_key<P, T>(&self, path: P, key: &str) -> Result<T, Error>
     where
         P: AsRef<Path>,
         T: DeserializeOwned,
@@ -54,7 +54,7 @@ impl YAMLDatastore {
         let hash_map: HashMap<&str, serde_yml::Value> = serde_yml::from_str(&file_string)?;
 
         // TODO test with more than one, but for now just hard-code the first member
-        let value = hash_map.get(key[0]).ok_or(Error::KeyNotFound)?.to_owned();
+        let value = hash_map.get(key).ok_or(Error::KeyNotFound)?.to_owned();
         Ok(from_value(value)?)
     }
 }
@@ -127,9 +127,7 @@ mod tests {
     #[test]
     fn test_with_single_bool_key() {
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
-        let result: bool = datastore
-            .get_with_key("complete.yaml", &vec!["complete"])
-            .unwrap();
+        let result: bool = datastore.get_with_key("complete.yaml", "complete").unwrap();
         assert_eq!(result, true);
     }
 
@@ -137,7 +135,7 @@ mod tests {
     fn single_bool_key_not_found() {
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
         let result = datastore
-            .get_with_key::<_, bool>("empty.yaml", &vec!["complete"])
+            .get_with_key::<_, bool>("empty.yaml", "complete")
             .unwrap_err();
         assert!(matches!(result, Error::KeyNotFound));
     }
