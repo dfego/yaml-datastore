@@ -8,7 +8,7 @@
 //! [00]: https://yaml.org/
 
 use serde::de::DeserializeOwned;
-use serde_yml::{Mapping, value::from_value};
+use serde_yaml::{Mapping, value::from_value};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -21,7 +21,7 @@ pub enum Error {
 
     /// YAML data could not be parsed. Given YAML is very permissive, this is likely a formatting error.
     #[error("data parse error")]
-    DataParseError(#[from] serde_yml::Error),
+    DataParseError(#[from] serde_yaml::Error),
 
     /// A key requested via [`Datastore::get_with_key`] or [`Datastore::get_with_key_vec`] was not found.
     #[error("key not found in data")]
@@ -56,11 +56,12 @@ fn map_recurse<T: DeserializeOwned>(map: &Mapping, keys: &[&str]) -> Result<T, E
 mod hash_map_recurse_tests {
     use super::Error;
     use super::map_recurse;
+    use serde_yaml::{Mapping, from_str};
 
     #[test]
     fn empty_keys() {
         let yaml = "";
-        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let data: Mapping = from_str(&yaml).unwrap();
         let value = map_recurse::<bool>(&data, &vec![]).unwrap_err();
         assert!(matches!(value, Error::EmptyKeyVector));
     }
@@ -68,7 +69,7 @@ mod hash_map_recurse_tests {
     #[test]
     fn missing_key_in_data() {
         let yaml = "";
-        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let data: Mapping = from_str(&yaml).unwrap();
         let value = map_recurse::<bool>(&data, &vec!["something"]).unwrap_err();
         assert!(matches!(value, Error::KeyNotFound));
     }
@@ -80,7 +81,7 @@ mod hash_map_recurse_tests {
         key2: true
         key3: false
         ";
-        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let data: Mapping = from_str(&yaml).unwrap();
 
         let value: bool = map_recurse(&data, &vec!["key1"]).unwrap();
         assert_eq!(value, false);
@@ -97,7 +98,7 @@ mod hash_map_recurse_tests {
             middle:
                 inner: true
         ";
-        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let data: Mapping = from_str(&yaml).unwrap();
         let value: bool = map_recurse(&data, &vec!["outer", "middle", "inner"]).unwrap();
         assert_eq!(value, true);
     }
@@ -138,7 +139,7 @@ impl Datastore {
     {
         let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
-        let result = serde_yml::from_str(&file_string)?;
+        let result = serde_yaml::from_str(&file_string)?;
         Ok(result)
     }
 
@@ -170,7 +171,7 @@ impl Datastore {
 
         let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
-        let mapping: Mapping = serde_yml::from_str(&file_string)?;
+        let mapping: Mapping = serde_yaml::from_str(&file_string)?;
         let value = mapping.get(key).ok_or(Error::KeyNotFound)?.to_owned();
         Ok(from_value(value)?)
     }
@@ -217,7 +218,7 @@ impl Datastore {
 
         let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
-        let mapping: serde_yml::Mapping = serde_yml::from_str(&file_string)?;
+        let mapping: Mapping = serde_yaml::from_str(&file_string)?;
         map_recurse(&mapping, key_vec)
     }
 }
