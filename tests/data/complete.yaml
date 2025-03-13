@@ -1,0 +1,10 @@
+name: Complete
+id: 1
+rating: 1.0
+complete: true
+tags:
+  - complete
+  - done
+  - finished
+nested:
+  value: true
