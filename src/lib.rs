@@ -1,12 +1,7 @@
 use serde::de::DeserializeOwned;
-use serde_yml::value::from_value;
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use serde_yml::{Mapping, value::from_value};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
-
-// static FULL_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("(.+)/(.*)").unwrap());
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -16,8 +11,86 @@ pub enum Error {
     #[error("data parse error")]
     DataParseError(#[from] serde_yml::Error),
 
-    #[error("key not found")]
+    #[error("key not found in data")]
     KeyNotFound,
+
+    #[error("empty key vector")]
+    EmptyKeyVector,
+}
+
+fn map_recurse<T: DeserializeOwned>(map: &Mapping, keys: &[&str]) -> Result<T, Error> {
+    if keys.is_empty() {
+        Err(Error::EmptyKeyVector)
+    } else if keys.len() == 1 {
+        // Base case, we're at the last key so we return this one
+        let value = map
+            .get(keys[0])
+            .ok_or(Error::KeyNotFound)
+            .unwrap()
+            .to_owned();
+        Ok(from_value(value)?)
+    } else {
+        // Recursion case, where we pass in the sub-mapping and remaining keys
+        // Having a mismatched type in the case of [as_mapping] failing means
+        // there can't be a key that matches, so we return [Error::KeyNotFound].
+        let sub_map = map
+            .get(&keys[0])
+            .ok_or(Error::KeyNotFound)?
+            .as_mapping()
+            .ok_or(Error::KeyNotFound)?;
+        map_recurse(sub_map, &keys[1..])
+    }
+}
+
+#[cfg(test)]
+mod hash_map_recurse_tests {
+    use super::Error;
+    use super::map_recurse;
+
+    #[test]
+    fn empty_keys() {
+        let yaml = "";
+        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let value = map_recurse::<bool>(&data, &vec![]).unwrap_err();
+        assert!(matches!(value, Error::EmptyKeyVector));
+    }
+
+    #[test]
+    fn missing_key_in_data() {
+        let yaml = "";
+        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let value = map_recurse::<bool>(&data, &vec!["something"]).unwrap_err();
+        assert!(matches!(value, Error::KeyNotFound));
+    }
+
+    #[test]
+    fn flat_keys() {
+        let yaml = "
+        key1: false
+        key2: true
+        key3: false
+        ";
+        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+
+        let value: bool = map_recurse(&data, &vec!["key1"]).unwrap();
+        assert_eq!(value, false);
+        let value: bool = map_recurse(&data, &vec!["key2"]).unwrap();
+        assert_eq!(value, true);
+        let value: bool = map_recurse(&data, &vec!["key3"]).unwrap();
+        assert_eq!(value, false);
+    }
+
+    #[test]
+    fn nested_keys() {
+        let yaml = "
+        outer:
+            middle:
+                inner: true
+        ";
+        let data: serde_yml::Mapping = serde_yml::from_str(&yaml).unwrap();
+        let value: bool = map_recurse(&data, &vec!["outer", "middle", "inner"]).unwrap();
+        assert_eq!(value, true);
+    }
 }
 
 pub struct YAMLDatastore {
@@ -51,11 +124,24 @@ impl YAMLDatastore {
 
         let full_path = self._root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
-        let hash_map: HashMap<&str, serde_yml::Value> = serde_yml::from_str(&file_string)?;
-
-        // TODO test with more than one, but for now just hard-code the first member
-        let value = hash_map.get(key).ok_or(Error::KeyNotFound)?.to_owned();
+        let mapping: Mapping = serde_yml::from_str(&file_string)?;
+        let value = mapping.get(key).ok_or(Error::KeyNotFound)?.to_owned();
         Ok(from_value(value)?)
+    }
+
+    pub fn get_with_key_vec<P, T>(&self, path: P, key_vec: &[&str]) -> Result<T, Error>
+    where
+        P: AsRef<Path>,
+        T: DeserializeOwned,
+    {
+        if key_vec.is_empty() {
+            return self.get(path);
+        }
+
+        let full_path = self._root.join(&path);
+        let file_string = std::fs::read_to_string(&full_path)?;
+        let mapping: serde_yml::Mapping = serde_yml::from_str(&file_string)?;
+        map_recurse(&mapping, &key_vec)
     }
 }
 
@@ -132,6 +218,15 @@ mod tests {
     }
 
     #[test]
+    fn nested_bool() {
+        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let result: bool = datastore
+            .get_with_key_vec("complete.yaml", &vec!["nested", "value"])
+            .unwrap();
+        assert_eq!(result, true);
+    }
+
+    #[test]
     fn single_bool_key_not_found() {
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
         let result = datastore
@@ -152,5 +247,23 @@ mod tests {
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
         let parsed = datastore.get::<_, TestFormat>("empty.yaml").unwrap_err();
         assert!(matches!(parsed, Error::DataParseError(_)));
+    }
+
+    #[test]
+    fn mismatched_type() {
+        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let result = datastore
+            .get_with_key::<_, u64>("complete.yaml", "complete")
+            .unwrap_err();
+        assert!(matches!(result, Error::DataParseError(_)));
+    }
+
+    #[test]
+    fn duplicate_key() {
+        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let result = datastore
+            .get_with_key::<_, bool>("duplicate.yaml", "key")
+            .unwrap_err();
+        assert!(matches!(result, Error::DataParseError(_)));
     }
 }
