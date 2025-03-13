@@ -189,7 +189,7 @@ impl Datastore {
     ///
     /// In order to get the value of `inner` (42), A `key_vec` would be passed as:
     ///
-    /// ```no_run
+    /// ```no_compile
     /// vec!["outer", "middle", "inner"]
     /// ```
     ///
