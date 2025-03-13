@@ -23,18 +23,14 @@ fn map_recurse<T: DeserializeOwned>(map: &Mapping, keys: &[&str]) -> Result<T, E
         Err(Error::EmptyKeyVector)
     } else if keys.len() == 1 {
         // Base case, we're at the last key so we return this one
-        let value = map
-            .get(keys[0])
-            .ok_or(Error::KeyNotFound)
-            .unwrap()
-            .to_owned();
+        let value = map.get(keys[0]).ok_or(Error::KeyNotFound)?.to_owned();
         Ok(from_value(value)?)
     } else {
         // Recursion case, where we pass in the sub-mapping and remaining keys
         // Having a mismatched type in the case of [as_mapping] failing means
         // there can't be a key that matches, so we return [Error::KeyNotFound].
         let sub_map = map
-            .get(&keys[0])
+            .get(keys[0])
             .ok_or(Error::KeyNotFound)?
             .as_mapping()
             .ok_or(Error::KeyNotFound)?;
@@ -141,7 +137,7 @@ impl YAMLDatastore {
         let full_path = self._root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
         let mapping: serde_yml::Mapping = serde_yml::from_str(&file_string)?;
-        map_recurse(&mapping, &key_vec)
+        map_recurse(&mapping, key_vec)
     }
 }
 
