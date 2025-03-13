@@ -106,7 +106,7 @@ mod hash_map_recurse_tests {
 
 /// Handle for a YAML datastore.
 ///
-/// Open with [init](Datastore::open).
+/// Open with [open](Datastore::open).
 pub struct Datastore {
     root: PathBuf,
 }
