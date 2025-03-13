@@ -6,3 +6,5 @@ tags:
   - complete
   - done
   - finished
+nested:
+  value: true

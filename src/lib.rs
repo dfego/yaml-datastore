@@ -36,9 +36,17 @@ impl YAMLDatastore {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[derive(serde::Deserialize, Debug, PartialEq)]
+    struct TestNested {
+        value: bool,
+    }
+
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    #[serde(deny_unknown_fields)]
     struct TestFormat {
         name: String,
         id: u64,
@@ -49,6 +57,8 @@ mod tests {
 
         #[serde(default)]
         tags: Vec<String>,
+
+        nested: Option<TestNested>,
     }
 
     static TEST_DATASTORE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data");
@@ -66,6 +76,7 @@ mod tests {
             rating: Some(1.0),
             complete: true,
             tags: vec!["complete".into(), "done".into(), "finished".into()],
+            nested: Some(TestNested { value: true }),
         };
 
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
@@ -81,6 +92,7 @@ mod tests {
             rating: Some(0.6),
             complete: false,
             tags: vec![],
+            nested: None,
         };
 
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
