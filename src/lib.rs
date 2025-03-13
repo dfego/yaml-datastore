@@ -1,5 +1,9 @@
 use serde::de::DeserializeOwned;
-use std::path::{Path, PathBuf};
+use serde_yml::value::from_value;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
 // static FULL_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("(.+)/(.*)").unwrap());
@@ -11,6 +15,9 @@ pub enum Error {
 
     #[error("data parse error")]
     DataParseError(#[from] serde_yml::Error),
+
+    #[error("key not found")]
+    KeyNotFound,
 }
 
 pub struct YAMLDatastore {
@@ -32,13 +39,30 @@ impl YAMLDatastore {
         let result = serde_yml::from_str(&file_string)?;
         Ok(result)
     }
+
+    pub fn get_with_key<P, T>(&self, path: P, key: &[&str]) -> Result<T, Error>
+    where
+        P: AsRef<Path>,
+        T: DeserializeOwned,
+    {
+        if key.is_empty() {
+            return self.get(path);
+        }
+
+        let full_path = self._root.join(&path);
+        let file_string = std::fs::read_to_string(&full_path)?;
+        let hash_map: HashMap<&str, serde_yml::Value> = serde_yml::from_str(&file_string)?;
+
+        // TODO test with more than one, but for now just hard-code the first member
+        let value = hash_map.get(key[0]).ok_or(Error::KeyNotFound)?.to_owned();
+        Ok(from_value(value)?)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
+    use std::vec;
 
     #[derive(serde::Deserialize, Debug, PartialEq)]
     struct TestNested {
@@ -98,6 +122,24 @@ mod tests {
         let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
         let parsed: TestFormat = datastore.get("no_tags.yaml").unwrap();
         assert_eq!(parsed, reference);
+    }
+
+    #[test]
+    fn test_with_single_bool_key() {
+        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let result: bool = datastore
+            .get_with_key("complete.yaml", &vec!["complete"])
+            .unwrap();
+        assert_eq!(result, true);
+    }
+
+    #[test]
+    fn single_bool_key_not_found() {
+        let datastore: YAMLDatastore = YAMLDatastore::init(TEST_DATASTORE_PATH);
+        let result = datastore
+            .get_with_key::<_, bool>("empty.yaml", &vec!["complete"])
+            .unwrap_err();
+        assert!(matches!(result, Error::KeyNotFound));
     }
 
     #[test]
