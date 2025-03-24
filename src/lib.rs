@@ -32,19 +32,23 @@ pub enum Error {
     EmptyKeyVector,
 }
 
-fn map_recurse<T: DeserializeOwned>(map: &Mapping, keys: &[&str]) -> Result<T, Error> {
+fn map_recurse<T, S>(map: &Mapping, keys: &[S]) -> Result<T, Error>
+where
+    T: DeserializeOwned,
+    S: AsRef<str> + serde_yaml::mapping::Index,
+{
     if keys.is_empty() {
         Err(Error::EmptyKeyVector)
     } else if keys.len() == 1 {
         // Base case, we're at the last key so we return this one
-        let value = map.get(keys[0]).ok_or(Error::KeyNotFound)?.to_owned();
+        let value = map.get(&keys[0]).ok_or(Error::KeyNotFound)?.to_owned();
         Ok(from_value(value)?)
     } else {
         // Recursion case, where we pass in the sub-mapping and remaining keys
         // Having a mismatched type in the case of [as_mapping] failing means
         // there can't be a key that matches, so we return [Error::KeyNotFound].
         let sub_map = map
-            .get(keys[0])
+            .get(&keys[0])
             .ok_or(Error::KeyNotFound)?
             .as_mapping()
             .ok_or(Error::KeyNotFound)?;
@@ -62,7 +66,7 @@ mod hash_map_recurse_tests {
     fn empty_keys() {
         let yaml = "";
         let data: Mapping = from_str(&yaml).unwrap();
-        let value = map_recurse::<bool>(&data, &vec![]).unwrap_err();
+        let value = map_recurse::<bool, &str>(&data, &vec![]).unwrap_err();
         assert!(matches!(value, Error::EmptyKeyVector));
     }
 
@@ -70,7 +74,7 @@ mod hash_map_recurse_tests {
     fn missing_key_in_data() {
         let yaml = "";
         let data: Mapping = from_str(&yaml).unwrap();
-        let value = map_recurse::<bool>(&data, &vec!["something"]).unwrap_err();
+        let value = map_recurse::<bool, &str>(&data, &vec!["something"]).unwrap_err();
         assert!(matches!(value, Error::KeyNotFound));
     }
 
@@ -208,10 +212,11 @@ impl Datastore {
     /// Will return [`Error::KeyNotFound`] if the given key was not found in a top-level map of the YAML file.
     /// * A file at `path` is not able to be parsed as valid YAML
     /// * The return type specified does not match the type found in the input file.
-    pub fn get_with_key_vec<P, T>(&self, path: P, key_vec: &[&str]) -> Result<T, Error>
+    pub fn get_with_key_vec<P, T, S>(&self, path: P, key_vec: &[S]) -> Result<T, Error>
     where
         P: AsRef<Path>,
         T: DeserializeOwned,
+        S: AsRef<str> + serde_yaml::mapping::Index,
     {
         if key_vec.is_empty() {
             return self.get(path);
