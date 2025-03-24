@@ -7,7 +7,7 @@
 //!
 //! [00]: https://yaml.org/
 
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_yaml::{Mapping, value::from_value};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -107,7 +107,7 @@ mod hash_map_recurse_tests {
 /// Handle for a YAML datastore.
 ///
 /// Open with [open](Datastore::open).
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Datastore {
     root: PathBuf,
 }
