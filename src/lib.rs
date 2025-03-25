@@ -32,7 +32,7 @@ pub enum Error {
     EmptyKeyVector,
 }
 
-fn map_recurse<T, S>(map: &Mapping, keys: &[S]) -> Result<T, Error>
+fn yaml_mapping_recurse<T, S>(map: &Mapping, keys: &[S]) -> Result<T, Error>
 where
     T: DeserializeOwned,
     S: AsRef<str> + serde_yaml::mapping::Index,
@@ -52,21 +52,21 @@ where
             .ok_or(Error::KeyNotFound)?
             .as_mapping()
             .ok_or(Error::KeyNotFound)?;
-        map_recurse(sub_map, &keys[1..])
+        yaml_mapping_recurse(sub_map, &keys[1..])
     }
 }
 
 #[cfg(test)]
-mod hash_map_recurse_tests {
+mod yaml_mapping_recurse_tests {
     use super::Error;
-    use super::map_recurse;
+    use super::yaml_mapping_recurse;
     use serde_yaml::{Mapping, from_str};
 
     #[test]
     fn empty_keys() {
         let yaml = "";
         let data: Mapping = from_str(&yaml).unwrap();
-        let value = map_recurse::<bool, &str>(&data, &vec![]).unwrap_err();
+        let value = yaml_mapping_recurse::<bool, &str>(&data, &vec![]).unwrap_err();
         assert!(matches!(value, Error::EmptyKeyVector));
     }
 
@@ -74,7 +74,7 @@ mod hash_map_recurse_tests {
     fn missing_key_in_data() {
         let yaml = "";
         let data: Mapping = from_str(&yaml).unwrap();
-        let value = map_recurse::<bool, &str>(&data, &vec!["something"]).unwrap_err();
+        let value = yaml_mapping_recurse::<bool, &str>(&data, &vec!["something"]).unwrap_err();
         assert!(matches!(value, Error::KeyNotFound));
     }
 
@@ -87,11 +87,11 @@ mod hash_map_recurse_tests {
         ";
         let data: Mapping = from_str(&yaml).unwrap();
 
-        let value: bool = map_recurse(&data, &vec!["key1"]).unwrap();
+        let value: bool = yaml_mapping_recurse(&data, &vec!["key1"]).unwrap();
         assert_eq!(value, false);
-        let value: bool = map_recurse(&data, &vec!["key2"]).unwrap();
+        let value: bool = yaml_mapping_recurse(&data, &vec!["key2"]).unwrap();
         assert_eq!(value, true);
-        let value: bool = map_recurse(&data, &vec!["key3"]).unwrap();
+        let value: bool = yaml_mapping_recurse(&data, &vec!["key3"]).unwrap();
         assert_eq!(value, false);
     }
 
@@ -103,7 +103,7 @@ mod hash_map_recurse_tests {
                 inner: true
         ";
         let data: Mapping = from_str(&yaml).unwrap();
-        let value: bool = map_recurse(&data, &vec!["outer", "middle", "inner"]).unwrap();
+        let value: bool = yaml_mapping_recurse(&data, &vec!["outer", "middle", "inner"]).unwrap();
         assert_eq!(value, true);
     }
 }
@@ -219,13 +219,13 @@ impl Datastore {
         S: AsRef<str> + serde_yaml::mapping::Index,
     {
         if key_vec.is_empty() {
-            return self.get(path);
+            return self.get_with_path(path);
         }
 
         let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
         let mapping: Mapping = serde_yaml::from_str(&file_string)?;
-        map_recurse(&mapping, key_vec)
+        yaml_mapping_recurse(&mapping, key_vec)
     }
 }
 
