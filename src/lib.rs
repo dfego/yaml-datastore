@@ -113,6 +113,7 @@ mod yaml_mapping_recurse_tests {
 /// Open with [open](Datastore::open).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Datastore {
+    /// The filesystem root of the datastore. All lookups are done relative to this path.
     root: PathBuf,
 }
 
@@ -124,7 +125,7 @@ impl Datastore {
         Datastore { root: path.into() }
     }
 
-    /// Get all the contents of a given YAML file in the datastore.
+    /// Get all the data from a given YAML file in the datastore.
     ///
     /// This function makes no assumptions about the underlying YAML data other than it being valid.
     ///
@@ -137,7 +138,7 @@ impl Datastore {
     /// Will return [`Error::DataParseError`] if:
     /// * A file at `path` is not able to be parsed as valid YAML
     /// * The return type specified does not match the type found in the input file.
-    pub fn get<P, T>(&self, path: P) -> Result<T, Error>
+    pub fn get_with_path<P, T>(&self, path: P) -> Result<T, Error>
     where
         P: AsRef<Path>,
         T: DeserializeOwned,
@@ -171,7 +172,7 @@ impl Datastore {
         T: DeserializeOwned,
     {
         if key.is_empty() {
-            return self.get(path);
+            return self.get_with_path(path);
         }
 
         let full_path = self.root.join(&path);
@@ -274,7 +275,7 @@ mod tests {
         };
 
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed: TestFormat = datastore.get("complete.yaml").unwrap();
+        let parsed: TestFormat = datastore.get_with_path("complete.yaml").unwrap();
         assert_eq!(parsed, reference);
     }
 
@@ -290,7 +291,7 @@ mod tests {
         };
 
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed: TestFormat = datastore.get("no_tags.yaml").unwrap();
+        let parsed: TestFormat = datastore.get_with_path("no_tags.yaml").unwrap();
         assert_eq!(parsed, reference);
     }
 
@@ -322,14 +323,18 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed = datastore.get::<_, TestFormat>("nonexistent").unwrap_err();
+        let parsed = datastore
+            .get_with_path::<_, TestFormat>("nonexistent")
+            .unwrap_err();
         assert!(matches!(parsed, Error::IOError(_)));
     }
 
     #[test]
     fn test_parse_error() {
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed = datastore.get::<_, TestFormat>("empty.yaml").unwrap_err();
+        let parsed = datastore
+            .get_with_path::<_, TestFormat>("empty.yaml")
+            .unwrap_err();
         assert!(matches!(parsed, Error::DataParseError(_)));
     }
 
