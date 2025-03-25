@@ -12,5 +12,6 @@ thiserror = "2.0.12"
 missing_docs = "warn"
 
 [lints.clippy]
-unwrap_used = "warn"
 pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"

@@ -7,10 +7,13 @@
 //!
 //! [00]: https://yaml.org/
 
+use keypath::{KeyPath, KeyPathParseError};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_yaml::{Mapping, value::from_value};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+pub mod keypath;
 
 /// Error type for this crate.
 #[derive(Error, Debug)]
@@ -30,9 +33,13 @@ pub enum Error {
     /// An empty key vector was passed to [`Datastore::get_with_key_vec`].
     #[error("empty key vector")]
     EmptyKeyVector,
+
+    /// Error returned from the keypath parser during parsing.
+    #[error(transparent)]
+    KeyPathError(#[from] KeyPathParseError),
 }
 
-fn map_recurse<T, S>(map: &Mapping, keys: &[S]) -> Result<T, Error>
+fn yaml_mapping_recurse<T, S>(map: &Mapping, keys: &[S]) -> Result<T, Error>
 where
     T: DeserializeOwned,
     S: AsRef<str> + serde_yaml::mapping::Index,
@@ -52,29 +59,29 @@ where
             .ok_or(Error::KeyNotFound)?
             .as_mapping()
             .ok_or(Error::KeyNotFound)?;
-        map_recurse(sub_map, &keys[1..])
+        yaml_mapping_recurse(sub_map, &keys[1..])
     }
 }
 
 #[cfg(test)]
-mod hash_map_recurse_tests {
+mod yaml_mapping_recurse_tests {
     use super::Error;
-    use super::map_recurse;
+    use super::yaml_mapping_recurse;
     use serde_yaml::{Mapping, from_str};
 
     #[test]
     fn empty_keys() {
         let yaml = "";
-        let data: Mapping = from_str(&yaml).unwrap();
-        let value = map_recurse::<bool, &str>(&data, &vec![]).unwrap_err();
+        let data: Mapping = from_str(yaml).unwrap();
+        let value = yaml_mapping_recurse::<bool, &str>(&data, &[]).unwrap_err();
         assert!(matches!(value, Error::EmptyKeyVector));
     }
 
     #[test]
     fn missing_key_in_data() {
         let yaml = "";
-        let data: Mapping = from_str(&yaml).unwrap();
-        let value = map_recurse::<bool, &str>(&data, &vec!["something"]).unwrap_err();
+        let data: Mapping = from_str(yaml).unwrap();
+        let value = yaml_mapping_recurse::<bool, &str>(&data, &["something"]).unwrap_err();
         assert!(matches!(value, Error::KeyNotFound));
     }
 
@@ -85,14 +92,14 @@ mod hash_map_recurse_tests {
         key2: true
         key3: false
         ";
-        let data: Mapping = from_str(&yaml).unwrap();
+        let data: Mapping = from_str(yaml).unwrap();
 
-        let value: bool = map_recurse(&data, &vec!["key1"]).unwrap();
-        assert_eq!(value, false);
-        let value: bool = map_recurse(&data, &vec!["key2"]).unwrap();
-        assert_eq!(value, true);
-        let value: bool = map_recurse(&data, &vec!["key3"]).unwrap();
-        assert_eq!(value, false);
+        let value: bool = yaml_mapping_recurse(&data, &["key1"]).unwrap();
+        assert!(!value);
+        let value: bool = yaml_mapping_recurse(&data, &["key2"]).unwrap();
+        assert!(value);
+        let value: bool = yaml_mapping_recurse(&data, &["key3"]).unwrap();
+        assert!(!value);
     }
 
     #[test]
@@ -102,17 +109,19 @@ mod hash_map_recurse_tests {
             middle:
                 inner: true
         ";
-        let data: Mapping = from_str(&yaml).unwrap();
-        let value: bool = map_recurse(&data, &vec!["outer", "middle", "inner"]).unwrap();
-        assert_eq!(value, true);
+        let data: Mapping = from_str(yaml).unwrap();
+        let value: bool = yaml_mapping_recurse(&data, &["outer", "middle", "inner"]).unwrap();
+        assert!(value);
     }
 }
 
 /// Handle for a YAML datastore.
 ///
-/// Open with [open](Datastore::open).
+/// Open with [`open()`](Datastore::open).
+/// Access with [`get()`](Datastore::get).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Datastore {
+    /// The filesystem root of the datastore. All lookups are done relative to this path.
     root: PathBuf,
 }
 
@@ -124,7 +133,67 @@ impl Datastore {
         Datastore { root: path.into() }
     }
 
-    /// Get all the contents of a given YAML file in the datastore.
+    /// Helper function to support [`Self::get`] that attempts to access the given path and YAML key.
+    fn try_get<P, S, T>(path: P, keys: &[S]) -> Option<T>
+    where
+        P: AsRef<Path>,
+        S: AsRef<str> + serde_yaml::mapping::Index,
+        T: DeserializeOwned,
+    {
+        let file_string = std::fs::read_to_string(path).ok()?;
+        if keys.is_empty() {
+            Some(serde_yaml::from_str(&file_string).ok()?)
+        } else {
+            let mapping: Mapping = serde_yaml::from_str(&file_string).ok()?;
+            yaml_mapping_recurse(&mapping, keys).ok()?
+        }
+    }
+
+    /// Get a value from the datastore given a keypath.
+    ///
+    /// This method parses the given string into a [`KeyPath`] and then iterates over the possible path
+    /// and key combinations until it finds a match or has exhausted them. It starts with the longest
+    /// possible path and shortest key and works backwards.
+    ///
+    /// More explicitly, it will search each possible path for the given keypath, starting with the longest.
+    /// If it finds a file that matches, it attempts to use the remainder of the keypath as keys into the YAML file.
+    /// If the full keypath matches a file path, then the entire YAML file data is returned.
+    ///
+    /// See the documentation for [keypath] for more information on how the keypath is used to generate combinations.
+    ///
+    /// # Examples
+    ///
+    /// For a keypath of `a.b.c.d`, the first match of the following would be returned if found:
+    ///
+    /// 1. The entire contents of file `a/b/c/d.yaml`.
+    /// 2. The contents of the key `d` in `a/b/c.yaml`.
+    /// 3. The contents of the key `c.d` in `a/b.yaml`.
+    /// 4. The contents of the key `b.c.d` in `a.yaml`.
+    ///
+    /// For the above, the dot-notation for YAML keys implies nesting. So for `b.c.d`:
+    ///
+    /// ```text
+    /// b:
+    ///   c:
+    ///     d: 42
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::KeyPathError`] if `keypath` is invalid.
+    ///
+    /// Returns [`Error::KeyNotFound`] if the given key was not found.
+    pub fn get<T: DeserializeOwned>(&self, keypath: &str) -> Result<T, Error> {
+        let keypath = KeyPath::try_from(keypath)?;
+        for (path, keys) in keypath.iter() {
+            if let Some(data) = Self::try_get(self.root.join(path), &keys) {
+                return Ok(data);
+            }
+        }
+        Err(Error::KeyNotFound)
+    }
+
+    /// Get all the data from a given YAML file in the datastore.
     ///
     /// This function makes no assumptions about the underlying YAML data other than it being valid.
     ///
@@ -137,7 +206,7 @@ impl Datastore {
     /// Will return [`Error::DataParseError`] if:
     /// * A file at `path` is not able to be parsed as valid YAML
     /// * The return type specified does not match the type found in the input file.
-    pub fn get<P, T>(&self, path: P) -> Result<T, Error>
+    pub fn get_with_path<P, T>(&self, path: P) -> Result<T, Error>
     where
         P: AsRef<Path>,
         T: DeserializeOwned,
@@ -171,7 +240,7 @@ impl Datastore {
         T: DeserializeOwned,
     {
         if key.is_empty() {
-            return self.get(path);
+            return self.get_with_path(path);
         }
 
         let full_path = self.root.join(&path);
@@ -219,13 +288,13 @@ impl Datastore {
         S: AsRef<str> + serde_yaml::mapping::Index,
     {
         if key_vec.is_empty() {
-            return self.get(path);
+            return self.get_with_path(path);
         }
 
         let full_path = self.root.join(&path);
         let file_string = std::fs::read_to_string(&full_path)?;
         let mapping: Mapping = serde_yaml::from_str(&file_string)?;
-        map_recurse(&mapping, key_vec)
+        yaml_mapping_recurse(&mapping, key_vec)
     }
 }
 
@@ -263,6 +332,22 @@ mod tests {
     }
 
     #[test]
+    fn test_keypath_complete() {
+        let reference = TestFormat {
+            name: "Complete".into(),
+            id: 1,
+            rating: Some(1.0),
+            complete: true,
+            tags: vec!["complete".into(), "done".into(), "finished".into()],
+            nested: Some(TestNested { value: true }),
+        };
+
+        let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
+        let parsed: TestFormat = datastore.get("complete").unwrap();
+        assert_eq!(parsed, reference);
+    }
+
+    #[test]
     fn test_complete() {
         let reference = TestFormat {
             name: "Complete".into(),
@@ -274,7 +359,7 @@ mod tests {
         };
 
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed: TestFormat = datastore.get("complete.yaml").unwrap();
+        let parsed: TestFormat = datastore.get_with_path("complete.yaml").unwrap();
         assert_eq!(parsed, reference);
     }
 
@@ -290,7 +375,7 @@ mod tests {
         };
 
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed: TestFormat = datastore.get("no_tags.yaml").unwrap();
+        let parsed: TestFormat = datastore.get_with_path("no_tags.yaml").unwrap();
         assert_eq!(parsed, reference);
     }
 
@@ -298,16 +383,16 @@ mod tests {
     fn test_with_single_bool_key() {
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result: bool = datastore.get_with_key("complete.yaml", "complete").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[test]
     fn nested_bool() {
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
         let result: bool = datastore
-            .get_with_key_vec("complete.yaml", &vec!["nested", "value"])
+            .get_with_key_vec("complete.yaml", &["nested", "value"])
             .unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[test]
@@ -322,14 +407,18 @@ mod tests {
     #[test]
     fn test_missing_file() {
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed = datastore.get::<_, TestFormat>("nonexistent").unwrap_err();
+        let parsed = datastore
+            .get_with_path::<_, TestFormat>("nonexistent")
+            .unwrap_err();
         assert!(matches!(parsed, Error::IOError(_)));
     }
 
     #[test]
     fn test_parse_error() {
         let datastore: Datastore = Datastore::open(TEST_DATASTORE_PATH);
-        let parsed = datastore.get::<_, TestFormat>("empty.yaml").unwrap_err();
+        let parsed = datastore
+            .get_with_path::<_, TestFormat>("empty.yaml")
+            .unwrap_err();
         assert!(matches!(parsed, Error::DataParseError(_)));
     }
 
