@@ -35,12 +35,12 @@
 //! The above should print out:
 //!
 //! ```text
-//! a.yml       | ["b", "c"]
-//! a.yaml      | ["b", "c"]
-//! a/b.yml     | ["c"]
-//! a/b.yaml    | ["c"]
-//! a/b/c.yml   | []
-//! a/b/c.yaml  | []
+//! a/b/c.yaml | []
+//! a/b/c.yml  | []
+//! a/b.yaml   | ["c"]
+//! a/b.yml    | ["c"]
+//! a.yaml     | ["b", "c"]
+//! a.yml      | ["b", "c"]
 //! ```
 //!
 //! This iterator can then be used to search the keystore with the given precedence: directories > files > keys.
@@ -59,21 +59,23 @@
 //! The above should print out:
 //!
 //! ```text
-//! a/b/c.yaml | []
-//! a/b/c.yml  | []
-//! a/b.yaml   | ["c"]
-//! a/b.yml    | ["c"]
-//! a.yaml     | ["b", "c"]
-//! a.yml      | ["b", "c"]
+//! a.yml       | ["b", "c"]
+//! a.yaml      | ["b", "c"]
+//! a/b.yml     | ["c"]
+//! a/b.yaml    | ["c"]
+//! a/b/c.yml   | []
+//! a/b/c.yaml  | []
 //! ```
 use std::{ffi::OsStr, path::PathBuf};
 use thiserror::Error;
 
 /// Default file extensions for the iterator.
-pub static DEFAULT_EXTENSIONS: &[&str] = &["yaml", "yml"];
+///
+/// It's just `yaml` and `yml`.
+pub const DEFAULT_EXTENSIONS: [&str; 2] = ["yaml", "yml"];
 
 /// Delimiter on which components of a keypath are split.
-const DELIMITER: &str = ".";
+pub const DELIMITER: &str = ".";
 
 /// Characters that are disallowed in a keypath and will cause failure.
 const INVALID_CHARACTERS: &[char] = &['.', '/'];
@@ -108,14 +110,13 @@ fn validate_and_trim(component: &str) -> Result<&str, KeyPathParseError> {
 }
 
 impl TryFrom<&str> for KeyPath {
+    /// The error returned if any components are empty or contain invalid characters.
     type Error = KeyPathParseError;
 
     /// Construct a [`KeyPath`] from a string.
     ///
     /// A valid `KeyPath` is a string with some components separated by `.`.
     /// See the [module-level documentation](crate::keypath) for details.
-    ///
-    /// # Errors
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         // Split up value, validate and trim it, then put it back together.
         Ok(Self {
@@ -129,21 +130,80 @@ impl TryFrom<&str> for KeyPath {
 }
 
 impl std::fmt::Display for KeyPath {
+    /// Format the keypath in its internal, parsed state.
+    /// In most cases this should be identical to the source string.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.raw)
     }
 }
 
 impl KeyPath {
-    /// Return an iterator over the keypath components using the [default list of extensions][DEFAULT_EXTENSIONS].
+    /// Return an iterator over the keypath using the [default list of extensions][DEFAULT_EXTENSIONS].
     ///
+    /// # Example
     ///
+    /// ```rust
+    /// # use yaml_datastore::keypath::KeyPath;
+    /// let keypath = KeyPath::try_from("a.b.c").expect("keypath parsed");
+    /// for (path, keys) in keypath.iter() {
+    ///     // do something
+    /// }
+    /// ```
+    ///
+    /// See the [module-level documentation](crate::keypath) for examples.
     #[must_use]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (PathBuf, Vec<&str>)> {
-        self.iter_extensions(DEFAULT_EXTENSIONS)
+        self.iter_extensions(&DEFAULT_EXTENSIONS)
     }
 
-    /// Return an iterator
+    /// Return an iterator over the keypath using the single specified extension.
+    ///
+    /// The extension should **not** contain a leading `.`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use yaml_datastore::keypath::KeyPath;
+    /// let keypath = KeyPath::try_from("a.b.c").expect("keypath parsed");
+    /// for (path, keys) in keypath.iter_extension("json") {
+    ///     // do something
+    /// }
+    /// ```
+    pub fn iter_extension<S: AsRef<OsStr> + ?Sized>(
+        &self,
+        extension: &S,
+    ) -> impl DoubleEndedIterator<Item = (PathBuf, Vec<&str>)> {
+        let paths = self.components();
+        let keys = self.components();
+
+        // This is intentional. We want an ExactSizeIterator so we can freely use
+        // rev() on the returned iterator, but we can't if we use a RangeInclusve.
+        #[allow(clippy::range_plus_one)]
+        let range = (1..paths.len() + 1).rev();
+        std::iter::zip(
+            range.clone().map(move |i| {
+                paths[0..i]
+                    .iter()
+                    .collect::<PathBuf>()
+                    .with_extension(extension)
+            }),
+            range.clone().map(move |i| keys[i..].to_vec()),
+        )
+    }
+
+    /// Return an iterator over the keypath components with the passed in file extensions.
+    ///
+    /// File extensions should **not** contain a leading `.`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use yaml_datastore::keypath::KeyPath;
+    /// let keypath = KeyPath::try_from("a.b.c").expect("keypath parsed");
+    /// for (path, keys) in keypath.iter_extensions(&vec!["yaml", "json"]) {
+    ///     // do something
+    /// }
+    /// ```
     pub fn iter_extensions<S: AsRef<OsStr>>(
         &self,
         extensions: &[S],
@@ -169,6 +229,14 @@ impl KeyPath {
     /// Return the parsed components as a list of strings.
     ///
     /// While not intended for use externally at this point, it could be useful for introspection.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use yaml_datastore::keypath::KeyPath;
+    /// let keypath = KeyPath::try_from("a.b.c").expect("keypath parsed");
+    /// assert_eq!(keypath.components(), vec!["a", "b", "c"]);
+    /// ```
     #[must_use]
     pub fn components(&self) -> Vec<&str> {
         self.raw.split(DELIMITER).collect()
@@ -222,6 +290,20 @@ mod tests {
             (PathBuf::from("this.yml"), vec!["is", "a", "keypath"]),
         ];
         expected.reverse();
+        assert_eq!(zipped, expected);
+    }
+
+    #[test]
+    fn iterator_with_extension() {
+        let input = "this.is.a.keypath";
+        let result = KeyPath::try_from(input).expect("key parsed");
+        let zipped: Vec<_> = result.iter_extension("yaml").collect();
+        let expected = vec![
+            (PathBuf::from("this/is/a/keypath.yaml"), vec![]),
+            (PathBuf::from("this/is/a.yaml"), vec!["keypath"]),
+            (PathBuf::from("this/is.yaml"), vec!["a", "keypath"]),
+            (PathBuf::from("this.yaml"), vec!["is", "a", "keypath"]),
+        ];
         assert_eq!(zipped, expected);
     }
 
