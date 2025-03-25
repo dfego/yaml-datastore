@@ -42,16 +42,16 @@ pub enum KeyPathParseError {
 /// The only way to construct is [`try_from`].
 #[derive(Debug)]
 pub(crate) struct KeyPath {
-    /// Components of the keypath used to navigate datastore.
-    components: Vec<String>,
+    /// Raw string that components point to.
+    raw: String,
 }
 
 /// Check a single keypath component for validity and return a String if it's valid.
-fn check_and_convert(component: &str) -> Result<String, KeyPathParseError> {
+fn validate_and_trim(component: &str) -> Result<&str, KeyPathParseError> {
     if component.is_empty() || component.contains(INVALID_CHARACTERS) {
         Err(KeyPathParseError::InvalidKeyPath)
     } else {
-        Ok(component.into())
+        Ok(component.trim())
     }
 }
 
@@ -59,18 +59,26 @@ impl TryFrom<&str> for KeyPath {
     type Error = KeyPathParseError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
+        // Split up value, validate and trim it, then put it back together.
         Ok(Self {
-            components: value
+            raw: value
                 .split(KEYPATH_DELIMITER)
-                .map(check_and_convert)
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(validate_and_trim)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(KEYPATH_DELIMITER),
         })
     }
 }
 
 impl Display for KeyPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.components.join("."))
+        write!(f, "{}", self.raw)
+    }
+}
+
+impl KeyPath {
+    pub fn components(&self) -> Vec<&str> {
+        self.raw.split(KEYPATH_DELIMITER).collect()
     }
 }
 
@@ -83,7 +91,17 @@ mod tests {
         let input = "this.is.a.valid.keypath";
         let result = KeyPath::try_from(input).unwrap();
         let expected = vec!["this", "is", "a", "valid", "keypath"];
-        assert_eq!(result.components, expected);
+        assert_eq!(result.components(), expected);
+        assert_eq!(result.to_string(), input);
+    }
+
+    #[test]
+    fn valid_with_spaces() {
+        let input = " this . is . a . valid . keypath ";
+        let result = KeyPath::try_from(input).unwrap();
+        let expected = vec!["this", "is", "a", "valid", "keypath"];
+        assert_eq!(result.components(), expected);
+        assert_eq!(result.to_string(), "this.is.a.valid.keypath");
     }
 
     #[test]
