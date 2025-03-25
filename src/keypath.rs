@@ -1,5 +1,6 @@
 //! Parsing for keypaths, which are flexible keys for navigating a datastore.
-//! Keypath components may represent either path components or keys within a YAML file.
+//!
+//! Keypath components may represent either path components or mapping keys within a YAML file.
 //!
 //! # Format
 //! Keypaths are of the form `a.b.c.d`, where `a`, `b`, `c`, and `d` are keys, and `.` are delimiters.
@@ -34,6 +35,30 @@
 //! The above should print out:
 //!
 //! ```text
+//! a.yml       | ["b", "c"]
+//! a.yaml      | ["b", "c"]
+//! a/b.yml     | ["c"]
+//! a/b.yaml    | ["c"]
+//! a/b/c.yml   | []
+//! a/b/c.yaml  | []
+//! ```
+//!
+//! This iterator can then be used to search the keystore with the given precedence: directories > files > keys.
+//!
+//! If the inverse behavior is desired, the iterator can be reversed with [`rev()`](std::iter::Iterator::rev):
+//!
+//! ```rust
+//! use yaml_datastore::keypath::KeyPath;
+//!
+//! let keypath = KeyPath::try_from("a.b.c").expect("keypath parsed");
+//! for (path, keys) in keypath.iter().rev() {
+//!     println!("{:10} | {:?}", path.display(), keys);
+//! }
+//! ```
+//!
+//! The above should print out:
+//!
+//! ```text
 //! a/b/c.yaml | []
 //! a/b/c.yml  | []
 //! a/b.yaml   | ["c"]
@@ -41,9 +66,6 @@
 //! a.yaml     | ["b", "c"]
 //! a.yml      | ["b", "c"]
 //! ```
-//!
-//! This iterator can then be used to search the keystore with the given precedence: directories > files > keys.
-
 use std::{ffi::OsStr, path::PathBuf};
 use thiserror::Error;
 
@@ -116,7 +138,8 @@ impl KeyPath {
     /// Return an iterator over the keypath components using the [default list of extensions][DEFAULT_EXTENSIONS].
     ///
     ///
-    pub fn iter(&self) -> impl Iterator<Item = (PathBuf, Vec<&str>)> {
+    #[must_use]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (PathBuf, Vec<&str>)> {
         self.iter_extensions(DEFAULT_EXTENSIONS)
     }
 
@@ -124,10 +147,14 @@ impl KeyPath {
     pub fn iter_extensions<S: AsRef<OsStr>>(
         &self,
         extensions: &[S],
-    ) -> impl Iterator<Item = (PathBuf, Vec<&str>)> {
+    ) -> impl DoubleEndedIterator<Item = (PathBuf, Vec<&str>)> {
         let paths = self.components();
         let keys = self.components();
-        let range = (1..=paths.len()).rev();
+
+        // This is intentional. We want an ExactSizeIterator so we can freely use
+        // rev() on the returned iterator, but we can't if we use a RangeInclusve.
+        #[allow(clippy::range_plus_one)]
+        let range = (1..paths.len() + 1).rev();
         std::iter::zip(
             range.clone().map(move |i| paths[0..i].iter().collect()),
             range.clone().map(move |i| keys[i..].to_vec()),
@@ -142,6 +169,7 @@ impl KeyPath {
     /// Return the parsed components as a list of strings.
     ///
     /// While not intended for use externally at this point, it could be useful for introspection.
+    #[must_use]
     pub fn components(&self) -> Vec<&str> {
         self.raw.split(DELIMITER).collect()
     }
@@ -175,6 +203,25 @@ mod tests {
             (PathBuf::from("this.yaml"), vec!["is", "a", "keypath"]),
             (PathBuf::from("this.yml"), vec!["is", "a", "keypath"]),
         ];
+        assert_eq!(zipped, expected);
+    }
+
+    #[test]
+    fn iterator_reversed() {
+        let input = "this.is.a.keypath";
+        let result = KeyPath::try_from(input).expect("key parsed");
+        let zipped: Vec<_> = result.iter().rev().collect();
+        let mut expected = vec![
+            (PathBuf::from("this/is/a/keypath.yaml"), vec![]),
+            (PathBuf::from("this/is/a/keypath.yml"), vec![]),
+            (PathBuf::from("this/is/a.yaml"), vec!["keypath"]),
+            (PathBuf::from("this/is/a.yml"), vec!["keypath"]),
+            (PathBuf::from("this/is.yaml"), vec!["a", "keypath"]),
+            (PathBuf::from("this/is.yml"), vec!["a", "keypath"]),
+            (PathBuf::from("this.yaml"), vec!["is", "a", "keypath"]),
+            (PathBuf::from("this.yml"), vec!["is", "a", "keypath"]),
+        ];
+        expected.reverse();
         assert_eq!(zipped, expected);
     }
 
