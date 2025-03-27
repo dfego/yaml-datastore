@@ -2,6 +2,18 @@
 name = "yaml-datastore"
 version = "0.1.0"
 edition = "2024"
+authors = ["Dan Fego <dan.fego@gmail.com>"]
+description = "API for using a set of YAML files as a cohesive datastore."
+keywords = ["yaml", "datastore", "search"]
+categories = [
+    "database-implementations",
+    "filesystem",
+    "parser-implementations",
+]
+license = "MIT"
+repository = "http://github.com/dfego/yaml-datastore/"
+readme = "README.md"
+exclude = [".github/", "tests/"]
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
